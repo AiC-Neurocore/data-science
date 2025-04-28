@@ -1,5 +1,5 @@
 # Установка необходимых библиотек
-!pip install networkx pyvis ipywidgets community plotly imageio
+!pip install networkx pyvis ipywidgets community plotly imageio Pillow
 
 import networkx as nx
 from pyvis.network import Network
@@ -15,8 +15,8 @@ import plotly.express as px
 import pickle
 import os
 import imageio
+from PIL import Image
 import base64
-from datetime import datetime
 
 # Загрузка файла GraphML
 uploaded = files.upload()
@@ -318,21 +318,39 @@ def save_gif():
     display(HTML("""
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script>
-        function captureFrames(count, frames, callback) {{
-            if (count <= 0) return callback(frames);
+        async function captureFrames(count, frames) {{
+            if (count <= 0) {{
+                fetch('/_message', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ frames: frames }})
+                }});
+                return;
+            }}
+            await new Promise(resolve => setTimeout(resolve, 200));
             html2canvas(document.querySelector(".vis-network") || document.querySelector("#graph")).then(canvas => {{
                 frames.push(canvas.toDataURL('image/png'));
-                setTimeout(() => captureFrames(count - 1, frames, callback), 200);
+                captureFrames(count - 1, frames);
             }});
         }}
-        captureFrames(10, [], frames => {{
-            var link = document.createElement('a');
-            link.download = 'graph_animation.gif';
-            link.href = 'data:application/octet-stream;base64,' + btoa(JSON.stringify(frames));
-            link.click();
-        }});
+        captureFrames(10, []);
     </script>
     """))
+
+# Обработчик кадров для GIF
+from IPython import get_ipython
+from google.colab import output
+def handle_frames(data):
+    frames = json.loads(data)['frames']
+    images = []
+    for frame in frames:
+        img_data = base64.b64decode(frame.split(',')[1])
+        img = Image.open(io.BytesIO(img_data))
+        images.append(np.array(img))
+    output_path = 'graph_animation.gif'
+    imageio.mimsave(output_path, images, duration=0.2, loop=0)
+    files.download(output_path)
+output.register_callback('notebook.handle_frames', handle_frames)
 
 # Основная функция обновления
 def update_visualization(b=None):
@@ -454,7 +472,7 @@ def update_visualization(b=None):
             document.querySelectorAll('.vis-node.top-wallet').forEach(node => {{
                 node.style.animation = '{animation_css}';
             }});
-        }}, 100);
+        }}, 0);
     </script>
     """
 
