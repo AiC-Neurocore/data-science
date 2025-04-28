@@ -17,6 +17,7 @@ import os
 import imageio
 from PIL import Image
 import base64
+from datetime import datetime
 
 # Загрузка файла GraphML
 uploaded = files.upload()
@@ -287,9 +288,7 @@ def create_legend(filtered_nodes, filtered_edges, top_wallet):
     total_edges = len(filtered_edges)
     max_size = max([float(G.nodes[n].get('size', 10)) for n in filtered_nodes], default=10)
     cluster_count = len(set(partition[n] for n in filtered_nodes))
-    rotation_status = 'Disabled'
-    if rotate_top_wallets.value:
-        rotation_status = f"Enabled ({rotation_direction.value})"
+    rotation_status = 'Off' if not rotate_top_wallets.value else rotation_direction.value
     return f"""
     <div style='background: rgba(0,0,0,0.7); color: #fff; padding: 12px; border-radius: 6px; position: absolute; top: 10px; left: 10px; z-index: 1000; font-family: Arial; font-size: 14px;'>
         <b>Tokenomics ({render_mode.value})</b><br>
@@ -316,41 +315,42 @@ def render_analytics(filtered_nodes):
 # Функция для создания GIF
 def save_gif():
     display(HTML("""
+    <div id='gif_notification' class='notification'>Creating GIF...</div>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script>
-        async function captureFrames(count, frames) {{
-            if (count <= 0) {{
-                fetch('/_message', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ frames: frames }})
-                }});
-                return;
-            }}
-            await new Promise(resolve => setTimeout(resolve, 200));
+        function captureFrames(count, callback) {{
+            if (count <= 0) return callback();
             html2canvas(document.querySelector(".vis-network") || document.querySelector("#graph")).then(canvas => {{
-                frames.push(canvas.toDataURL('image/png'));
-                captureFrames(count - 1, frames);
+                var img = canvas.toDataURL('image/png');
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/_message', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.send(JSON.stringify({{ frame: img }}));
+                setTimeout(() => captureFrames(count - 1, callback), 200);
             }});
         }}
-        captureFrames(10, []);
+        captureFrames(10, () => {{
+            document.getElementById('gif_notification').innerText = 'GIF Created!';
+            setTimeout(() => document.getElementById('gif_notification').style.display = 'none', 1500);
+        }});
     </script>
     """))
 
 # Обработчик кадров для GIF
-from IPython import get_ipython
+frames = []
+def handle_frame(data):
+    global frames
+    frame_data = json.loads(data)['frame']
+    img_data = base64.b64decode(frame_data.split(',')[1])
+    img = Image.open(io.BytesIO(img_data))
+    frames.append(np.array(img))
+    if len(frames) == 10:
+        output_path = 'graph_animation.gif'
+        imageio.mimsave(output_path, frames, duration=0.2, loop=0)
+        files.download(output_path)
+        frames = []
 from google.colab import output
-def handle_frames(data):
-    frames = json.loads(data)['frames']
-    images = []
-    for frame in frames:
-        img_data = base64.b64decode(frame.split(',')[1])
-        img = Image.open(io.BytesIO(img_data))
-        images.append(np.array(img))
-    output_path = 'graph_animation.gif'
-    imageio.mimsave(output_path, images, duration=0.2, loop=0)
-    files.download(output_path)
-output.register_callback('notebook.handle_frames', handle_frames)
+output.register_callback('notebook.handle_frame', handle_frame)
 
 # Основная функция обновления
 def update_visualization(b=None):
@@ -400,11 +400,11 @@ def update_visualization(b=None):
         html_content = render_3d_visualization(filtered_nodes, filtered_edges, top_wallets, degrees)
 
     # Стили и анимации
-    animations = ['wave 2s infinite']
-    if rotate_top_wallets.value and high_quality.value:
+    animations = ['wave 2s infinite'] if show_top_wallets.value else []
+    if rotate_top_wallets.value and high_quality.value and show_top_wallets.value:
         rotation_keyframe = 'rotate' if rotation_direction.value == 'Clockwise' else 'rotate-reverse'
         animations.append(f'{rotation_keyframe} 20s linear infinite')
-    animation_css = ', '.join(animations)
+    animation_css = ', '.join(animations) if animations else 'none'
     custom_css = f"""
     <style>
         .vis-network canvas {{
@@ -468,11 +468,9 @@ def update_visualization(b=None):
                 particleContainer.appendChild(particle);
             }}
         }}
-        setTimeout(() => {{
-            document.querySelectorAll('.vis-node.top-wallet').forEach(node => {{
-                node.style.animation = '{animation_css}';
-            }});
-        }}, 0);
+        document.querySelectorAll('.vis-node.top-wallet').forEach(node => {{
+            node.style.animation = '{animation_css}';
+        }});
     </script>
     """
 
