@@ -1,5 +1,5 @@
 # Установка необходимых библиотек
-!pip install networkx pyvis ipywidgets community plotly
+!pip install networkx pyvis ipywidgets community plotly imageio
 
 import networkx as nx
 from pyvis.network import Network
@@ -14,6 +14,9 @@ import pandas as pd
 import plotly.express as px
 import pickle
 import os
+import imageio
+import base64
+from datetime import datetime
 
 # Загрузка файла GraphML
 uploaded = files.upload()
@@ -64,62 +67,68 @@ def get_edge_width(weight, min_width=0.5, max_width=5):
     return min_width + (max_width - min_width) * normalized
 
 # Виджеты для настройки
-min_size_filter = widgets.FloatSlider(value=10, min=10, max=max([float(G.nodes[n].get('size', 10)) for n in G.nodes], default=10), step=0.1, description='Min Wallet Size:', tooltip='Filter wallets by minimum size')
-min_weight_filter = widgets.FloatSlider(value=0, min=0, max=max([float(G.edges[e].get('weight', 0)) for e in G.edges], default=1), step=0.1, description='Min Tx Weight:', tooltip='Filter transactions by minimum weight')
+min_size_filter = widgets.FloatSlider(value=10, min=10, max=max([float(G.nodes[n].get('size', 10)) for n in G.nodes], default=10), step=0.1, description='Min Size:', tooltip='Filter wallets by minimum size')
+min_weight_filter = widgets.FloatSlider(value=0, min=0, max=max([float(G.edges[e].get('weight', 0)) for e in G.edges], default=1), step=0.1, description='Min Weight:', tooltip='Filter transactions by minimum weight')
 min_color_filter = widgets.FloatSlider(value=0, min=0, max=max([float(G.nodes[n].get('color', 0)) for n in G.nodes], default=1), step=0.1, description='Min Color:', tooltip='Filter nodes by minimum color attribute')
-node_size_scale = widgets.IntSlider(value=300, min=20, max=600, step=10, description='Max Node Size:', tooltip='Maximum size for nodes')
-size_exponent = widgets.FloatSlider(value=5.0, min=1.0, max=8.0, step=0.1, description='Size Exponent:', tooltip='Exponent for node size scaling')
-edge_width_scale = widgets.FloatSlider(value=5.0, min=0.5, max=15.0, step=0.5, description='Max Edge Width:', tooltip='Maximum width for edges')
+node_size_scale = widgets.IntSlider(value=300, min=20, max=600, step=10, description='Node Size:', tooltip='Maximum size for nodes')
+size_exponent = widgets.FloatSlider(value=5.0, min=1.0, max=8.0, step=0.1, description='Exponent:', tooltip='Exponent for node size scaling')
+edge_width_scale = widgets.FloatSlider(value=5.0, min=0.5, max=15.0, step=0.5, description='Edge Width:', tooltip='Maximum width for edges')
 font_size = widgets.IntSlider(value=14, min=8, max=24, step=2, description='Font Size:', tooltip='Font size for labels')
 bg_color = widgets.ColorPicker(value='#0a0a23', description='Background:', tooltip='Background color')
 font_color = widgets.ColorPicker(value='#ffffff', description='Font Color:', tooltip='Font color for labels')
-physics_enabled = widgets.Checkbox(value=True, description='Enable Physics', tooltip='Enable physics simulation')
+physics_enabled = widgets.Checkbox(value=True, description='Physics', tooltip='Enable physics simulation')
 gravity = widgets.FloatSlider(value=-60, min=-100, max=0, step=5, description='Gravity:', tooltip='Physics gravity strength')
-highlight_cluster = widgets.Dropdown(options=['All'] + list(set(partition.values())), value='All', description='Highlight Cluster:', tooltip='Highlight a specific cluster')
-show_top_wallets = widgets.Checkbox(value=True, description='Highlight Top Wallets', tooltip='Highlight top wallets by size')
-top_wallets_count = widgets.IntSlider(value=5, min=1, max=20, step=1, description='Top Wallets:', tooltip='Number of top wallets to highlight')
+highlight_cluster = widgets.Dropdown(options=['All'] + list(set(partition.values())), value='All', description='Cluster:', tooltip='Highlight a specific cluster')
+show_top_wallets = widgets.Checkbox(value=True, description='Top Wallets', tooltip='Highlight top wallets by size')
+top_wallets_count = widgets.IntSlider(value=5, min=1, max=20, step=1, description='Top Count:', tooltip='Number of top wallets to highlight')
 color_mode = widgets.Dropdown(options=['Cluster', 'Color Attribute', 'Degree'], value='Color Attribute', description='Color Mode:', tooltip='Node color mode')
 focus_wallet = widgets.Text(value='', description='Focus Wallet:', placeholder='Enter wallet address', tooltip='Focus on a specific wallet')
-render_mode = widgets.Dropdown(options=['2D', '3D'], value='2D', description='Render Mode:', tooltip='Switch between 2D and 3D rendering')
-rotate_top_wallets = widgets.Checkbox(value=False, description='Rotate Top Wallets', tooltip='Enable rotation animation for top wallets')
-high_quality = widgets.Checkbox(value=True, description='High Quality Render', tooltip='Enable high-quality rendering with effects')
+render_mode = widgets.Dropdown(options=['2D', '3D'], value='2D', description='Render:', tooltip='Switch between 2D and 3D rendering')
+rotate_top_wallets = widgets.Checkbox(value=False, description='Rotate Wallets', tooltip='Enable rotation for top wallets')
+rotation_direction = widgets.Dropdown(options=['Clockwise', 'Counterclockwise'], value='Clockwise', description='Direction:', tooltip='Rotation direction', disabled=True)
+high_quality = widgets.Checkbox(value=True, description='High Quality', tooltip='Enable high-quality rendering with effects')
 theme_mode = widgets.Dropdown(options=['Dark', 'Light'], value='Dark', description='Theme:', tooltip='Switch between dark and light themes')
 
+# Управление видимостью Rotation Direction
+def update_rotation_direction(change):
+    rotation_direction.disabled = not rotate_top_wallets.value
+rotate_top_wallets.observe(update_rotation_direction, names='value')
+
 # Apply Settings button
-apply_button = widgets.Button(description='Apply Settings', button_style='success', tooltip='Apply all settings')
-apply_button.layout = widgets.Layout(width='200px', height='40px', margin='10px')
+apply_button = widgets.Button(description='Apply', button_style='success', tooltip='Apply all settings')
+apply_button.layout = widgets.Layout(width='150px', height='40px', margin='10px')
 
 # Организация виджетов в аккордеон
-filters_accordion = widgets.VBox([min_size_filter, min_weight_filter, min_color_filter, focus_wallet], layout=widgets.Layout(padding='10px'))
-visualization_accordion = widgets.VBox([node_size_scale, size_exponent, edge_width_scale, font_size], layout=widgets.Layout(padding='10px'))
-physics_accordion = widgets.VBox([physics_enabled, gravity, highlight_cluster], layout=widgets.Layout(padding='10px'))
-appearance_accordion = widgets.VBox([bg_color, font_color, color_mode, show_top_wallets, top_wallets_count, rotate_top_wallets, high_quality, theme_mode, render_mode], layout=widgets.Layout(padding='10px'))
+filters_accordion = widgets.VBox([min_size_filter, min_weight_filter, min_color_filter, focus_wallet], layout=widgets.Layout(padding='5px'))
+visualization_accordion = widgets.VBox([node_size_scale, size_exponent, edge_width_scale, font_size], layout=widgets.Layout(padding='5px'))
+physics_accordion = widgets.VBox([physics_enabled, gravity, highlight_cluster], layout=widgets.Layout(padding='5px'))
+appearance_accordion = widgets.VBox([bg_color, font_color, color_mode, show_top_wallets, top_wallets_count, rotate_top_wallets, rotation_direction, high_quality, theme_mode, render_mode], layout=widgets.Layout(padding='5px'))
 accordion = widgets.Accordion(children=[filters_accordion, visualization_accordion, physics_accordion, appearance_accordion])
-accordion.set_title(0, 'Filters')
-accordion.set_title(1, 'Visualization')
-accordion.set_title(2, 'Physics & Clustering')
-accordion.set_title(3, 'Appearance & Animations')
+accordion.set_title(0, '⚙️ Filters')
+accordion.set_title(1, '📊 Visualization')
+accordion.set_title(2, '🌐 Physics')
+accordion.set_title(3, '🎨 Appearance')
 
 # CSS для стилизации меню и графа
 menu_css = """
 <style>
-    .widget-label { font-weight: bold; color: #333; }
-    .widget-vbox { background: #f5f5f5; border-radius: 8px; padding: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-    .widget-accordion .p-Accordion-child { background: #ffffff; border-radius: 5px; margin: 5px; }
-    .widget-accordion .p-Accordion-title { background: #007bff; color: white; border-radius: 5px; padding: 8px; }
-    .widget-button { font-size: 16px; font-weight: bold; border-radius: 5px; }
-    .widget-button:hover { background: #28a745 !important; }
-    .dark-theme .widget-vbox { background: #2c2c2c; }
-    .dark-theme .widget-label { color: #ffffff; }
-    .dark-theme .widget-accordion .p-Accordion-child { background: #3c3c3c; }
-    .dark-theme .widget-accordion .p-Accordion-title { background: #0056b3; }
-    .notification { position: absolute; top: 50px; left: 10px; background: #28a745; color: white; padding: 10px; border-radius: 5px; z-index: 1000; display: none; }
+    .widget-label { font-weight: 600; color: #222; font-size: 14px; }
+    .widget-vbox { background: #fafafa; border-radius: 6px; padding: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .widget-accordion .p-Accordion-child { background: #fff; border-radius: 4px; margin: 4px; }
+    .widget-accordion .p-Accordion-title { background: #00aaff; color: #fff; border-radius: 4px; padding: 6px; font-size: 14px; }
+    .widget-button { font-size: 14px; font-weight: 600; border-radius: 4px; transition: all 0.2s; }
+    .widget-button:hover { background: #00cc00 !important; transform: scale(1.05); }
+    .dark-theme .widget-vbox { background: #1a1a1a; }
+    .dark-theme .widget-label { color: #ddd; }
+    .dark-theme .widget-accordion .p-Accordion-child { background: #2a2a2a; }
+    .dark-theme .widget-accordion .p-Accordion-title { background: #0077cc; }
+    .notification { position: fixed; top: 60px; left: 10px; background: #00cc00; color: #fff; padding: 8px 16px; border-radius: 4px; z-index: 1000; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); display: none; }
     .particles { position: absolute; width: 100%; height: 800px; pointer-events: none; }
-    .particle { position: absolute; background: #ffffff; border-radius: 50%; opacity: 0.5; animation: move 10s linear infinite; }
-    .dark-theme .particle { background: #ffffff; }
-    .light-theme .particle { background: #000000; }
+    .particle { position: absolute; background: #fff; border-radius: 50%; opacity: 0.4; animation: move 8s linear infinite; }
+    .dark-theme .particle { background: #fff; }
+    .light-theme .particle { background: #000; }
     @keyframes move {
-        0% { transform: translateY(0); opacity: 0.5; }
+        0% { transform: translateY(0); opacity: 0.4; }
         100% { transform: translateY(-800px); opacity: 0; }
     }
 </style>
@@ -136,21 +145,21 @@ def render_2d_visualization(filtered_nodes, filtered_edges, top_wallets, degrees
         node_size = get_node_size(size_val, max_size=node_size_scale.value, exponent=size_exponent.value)
 
         if color_mode.value == 'Cluster':
-            color = {'background': f'hsl({(cluster * 60) % 360}, 70%, 50%)', 'border': '#ffffff', 'highlight': {'background': f'hsl({(cluster * 60) % 360}, 70%, 60%)', 'border': '#ffffff'}}
+            color = {'background': f'hsl({(cluster * 60) % 360}, 70%, 50%)', 'border': '#fff', 'highlight': {'background': f'hsl({(cluster * 60) % 360}, 70%, 60%)', 'border': '#fff'}}
         elif color_mode.value == 'Color Attribute':
-            color = {'background': f'hsl({color_val % 360}, 70%, 50%)', 'border': '#ffffff', 'highlight': {'background': f'hsl({color_val % 360}, 70%, 60%)', 'border': '#ffffff'}}
+            color = {'background': f'hsl({color_val % 360}, 70%, 50%)', 'border': '#fff', 'highlight': {'background': f'hsl({color_val % 360}, 70%, 60%)', 'border': '#fff'}}
         else:
             degree = degrees[node]
             max_degree = max(degrees.values(), default=1)
-            color = {'background': f'hsl({(degree/max_degree) * 240}, 70%, 50%)', 'border': '#ffffff', 'highlight': {'background': f'hsl({(degree/max_degree) * 240}, 70%, 60%)', 'border': '#ffffff'}}
+            color = {'background': f'hsl({(degree/max_degree) * 240}, 70%, 50%)', 'border': '#fff', 'highlight': {'background': f'hsl({(degree/max_degree) * 240}, 70%, 60%)', 'border': '#fff'}}
         
         if highlight_cluster.value != 'All' and int(highlight_cluster.value) != cluster:
-            color = {'background': '#444444', 'border': '#666666'}
+            color = {'background': '#444', 'border': '#666'}
             opacity = 0.3
         else:
             opacity = 1.0
         if node in top_wallets:
-            color = {'background': 'radial-gradient(circle, #ff4d4d, #cc0000)', 'border': '#ffffff', 'highlight': {'background': '#ff8080', 'border': '#ffffff'}}
+            color = {'background': 'radial-gradient(circle, #ff4d4d, #cc0000)', 'border': '#fff', 'highlight': {'background': '#ff8080', 'border': '#fff'}}
             node_size *= 1.7
 
         title = f"Address: {G.nodes[node].get('label', node)}<br>Size: {size_val:.2f}<br>Color: {color_val:.2f}<br>Cluster: {cluster}<br>Degree: {degrees[node]}"
@@ -162,7 +171,7 @@ def render_2d_visualization(filtered_nodes, filtered_edges, top_wallets, degrees
         width = get_edge_width(weight, max_width=edge_width_scale.value)
         opacity = 1.0 if highlight_cluster.value == 'All' or (partition.get(u) == partition.get(v) == int(highlight_cluster.value)) else 0.3
         edge_class = 'top-edge' if (u, v) in top_edges and high_quality.value else ''
-        net.add_edge(u, v, width=width, title=f"Tx Weight: {weight:.2f}", color={'color': '#aaaaaa', 'opacity': opacity, 'highlight': '#ffffff'}, arrows='to', custom_class=edge_class)
+        net.add_edge(u, v, width=width, title=f"Tx Weight: {weight:.2f}", color={'color': '#aaa', 'opacity': opacity, 'highlight': '#fff'}, arrows='to', custom_class=edge_class)
 
     options = {
         "nodes": {
@@ -278,19 +287,22 @@ def create_legend(filtered_nodes, filtered_edges, top_wallet):
     total_edges = len(filtered_edges)
     max_size = max([float(G.nodes[n].get('size', 10)) for n in filtered_nodes], default=10)
     cluster_count = len(set(partition[n] for n in filtered_nodes))
+    rotation_status = 'Disabled'
+    if rotate_top_wallets.value:
+        rotation_status = f"Enabled ({rotation_direction.value})"
     return f"""
-    <div style='background: rgba(0,0,0,0.85); color: white; padding: 15px; border-radius: 10px; position: absolute; top: 10px; left: 10px; z-index: 1000; font-family: Arial;'>
-        <b>Tokenomics Visualization ({render_mode.value})</b><br>
-        - <b>Nodes</b>: {total_nodes}<br>
-        - <b>Edges</b>: {total_edges}<br>
-        - <b>Max Wallet Size</b>: {max_size:.2f} (<a href='javascript:void(0)' onclick="document.getElementById('focus_wallet').value='{top_wallet}';document.getElementById('apply_button').click();">Focus</a>)<br>
-        - <b>Clusters</b>: {cluster_count}<br>
-        - <b>Node Size</b>: Exponentially scaled (adjust with Size Exponent)<br>
-        - <b>Edge Width</b>: Transaction weight<br>
-        - <b>Node Color</b>: {color_mode.value}<br>
-        - <b>Rotate Top Wallets</b>: {'Enabled' if rotate_top_wallets.value else 'Disabled'}<br>
-        - <b>Tooltip</b>: Hover for details<br>
-        - <b>Top Wallets</b>: Red nodes with full labels
+    <div style='background: rgba(0,0,0,0.7); color: #fff; padding: 12px; border-radius: 6px; position: absolute; top: 10px; left: 10px; z-index: 1000; font-family: Arial; font-size: 14px;'>
+        <b>Tokenomics ({render_mode.value})</b><br>
+        - Nodes: {total_nodes}<br>
+        - Edges: {total_edges}<br>
+        - Max Size: {max_size:.2f} (<a href='javascript:void(0)' onclick="document.getElementById('focus_wallet').value='{top_wallet}';document.getElementById('apply_button').click();">Focus</a>)<br>
+        - Clusters: {cluster_count}<br>
+        - Node Size: Exponential scaling<br>
+        - Edge Width: Tx weight<br>
+        - Color: {color_mode.value}<br>
+        - Rotation: {rotation_status}<br>
+        - Tooltip: Hover for details<br>
+        - Top Wallets: Red nodes
     </div>
     """
 
@@ -301,6 +313,27 @@ def render_analytics(filtered_nodes):
     fig.update_layout(showlegend=False, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white' if theme_mode.value == 'Dark' else 'black')
     fig.show()
 
+# Функция для создания GIF
+def save_gif():
+    display(HTML("""
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <script>
+        function captureFrames(count, frames, callback) {{
+            if (count <= 0) return callback(frames);
+            html2canvas(document.querySelector(".vis-network") || document.querySelector("#graph")).then(canvas => {{
+                frames.push(canvas.toDataURL('image/png'));
+                setTimeout(() => captureFrames(count - 1, frames, callback), 200);
+            }});
+        }}
+        captureFrames(10, [], frames => {{
+            var link = document.createElement('a');
+            link.download = 'graph_animation.gif';
+            link.href = 'data:application/octet-stream;base64,' + btoa(JSON.stringify(frames));
+            link.click();
+        }});
+    </script>
+    """))
+
 # Основная функция обновления
 def update_visualization(b=None):
     # Показать уведомление
@@ -309,7 +342,7 @@ def update_visualization(b=None):
     <script>
         const notification = document.getElementById('notification');
         notification.style.display = 'block';
-        setTimeout(() => notification.style.display = 'none', 2000);
+        setTimeout(() => notification.style.display = 'none', 1500);
     </script>
     """))
 
@@ -351,7 +384,8 @@ def update_visualization(b=None):
     # Стили и анимации
     animations = ['wave 2s infinite']
     if rotate_top_wallets.value and high_quality.value:
-        animations.append('rotate 20s linear infinite')
+        rotation_keyframe = 'rotate' if rotation_direction.value == 'Clockwise' else 'rotate-reverse'
+        animations.append(f'{rotation_keyframe} 20s linear infinite')
     animation_css = ', '.join(animations)
     custom_css = f"""
     <style>
@@ -385,15 +419,19 @@ def update_visualization(b=None):
             0% {{ transform: rotate(0deg); }}
             100% {{ transform: rotate(360deg); }}
         }}
+        @keyframes rotate-reverse {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(-360deg); }}
+        }}
         @keyframes pulse-edge {{
             0% {{ stroke-opacity: 0.7; }}
             50% {{ stroke-opacity: 1; }}
             100% {{ stroke-opacity: 0.7; }}
         }}
         .particles {{ position: absolute; width: 100%; height: 800px; pointer-events: none; }}
-        .particle {{ position: absolute; background: {'#000000' if theme_mode.value == 'Light' else '#ffffff'}; border-radius: 50%; opacity: 0.5; animation: move 10s linear infinite; }}
+        .particle {{ position: absolute; background: {'#000000' if theme_mode.value == 'Light' else '#ffffff'}; border-radius: 50%; opacity: 0.4; animation: move 8s linear infinite; }}
         @keyframes move {{
-            0% {{ transform: translateY(0); opacity: 0.5; }}
+            0% {{ transform: translateY(0); opacity: 0.4; }}
             100% {{ transform: translateY(-800px); opacity: 0; }}
         }}
     </style>
@@ -408,11 +446,10 @@ def update_visualization(b=None):
                 particle.style.width = '3px';
                 particle.style.height = '3px';
                 particle.style.left = Math.random() * 100 + '%';
-                particle.style.animationDelay = Math.random() * 10 + 's';
+                particle.style.animationDelay = Math.random() * 8 + 's';
                 particleContainer.appendChild(particle);
             }}
         }}
-        // Обновление анимации для топ-кошельков
         setTimeout(() => {{
             document.querySelectorAll('.vis-node.top-wallet').forEach(node => {{
                 node.style.animation = '{animation_css}';
@@ -426,7 +463,7 @@ def update_visualization(b=None):
     legend_html = create_legend(filtered_nodes, filtered_edges, top_wallet)
 
     # Сохранение скриншота
-    screenshot_button = widgets.Button(description="Save Screenshot", button_style='info', tooltip='Save graph as PNG')
+    screenshot_button = widgets.Button(description="Screenshot", button_style='info', tooltip='Save graph as PNG')
     def on_screenshot_button_clicked(b):
         display(HTML("""
         <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
@@ -440,6 +477,12 @@ def update_visualization(b=None):
         </script>
         """))
     screenshot_button.on_click(on_screenshot_button_clicked)
+
+    # Сохранение GIF
+    gif_button = widgets.Button(description="Save GIF", button_style='info', tooltip='Save graph as animated GIF')
+    def on_gif_button_clicked(b):
+        save_gif()
+    gif_button.on_click(on_gif_button_clicked)
 
     # Экспорт данных
     export_button = widgets.Button(description="Export CSV", button_style='info', tooltip='Export graph data as CSV')
@@ -462,7 +505,7 @@ def update_visualization(b=None):
         document.getElementById('apply_button').id = 'apply_button';
     </script>
     """))
-    display(widgets.HBox([screenshot_button, export_button]))
+    display(widgets.HBox([screenshot_button, gif_button, export_button]))
 
     # Аналитика
     render_analytics(filtered_nodes)
